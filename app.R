@@ -7,7 +7,8 @@ library(mapview)
 ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
-      fileInput('curr_file', 'Select file', accept=c('.shp','.dbf','.sbn','.sbx','.shx',".prj"), multiple=TRUE),
+      fileInput('curr_file', 'Select all components of any number of shapefiles', accept=c('.shp','.dbf','.sbn','.sbx','.shx',".prj"), multiple=TRUE),
+      DTOutput('shapefiles'),
       DTOutput('layers')
     ),
     mainPanel(
@@ -19,7 +20,8 @@ ui <- fluidPage(
 server <- function(input, output, session) {
 
   dat <- reactiveValues(
-    file = NA,
+    files = NA,
+    shapefiles = NA,
     layers = NA,
     sf = NA
   )
@@ -33,27 +35,48 @@ server <- function(input, output, session) {
       file.rename(input$curr_file$datapath[i], input$curr_file$name[i])
     }
     setwd(wd)
-    dat$file <- file.path(sourcedir, input$curr_file$name[grep(pattern="*.shp$", input$curr_file$name)])
-    dat$layers <- st_layers(dat$file)
+    dotshp <- input$curr_file$name[grep(pattern="*.shp$", input$curr_file$name)]
+    files <- file.path(sourcedir, dotshp)
+    layers <- lapply(files, st_layers)
+    dat$shapefiles <- data.frame(
+      file = dotshp, 
+      layers = sapply(layers, \(x) paste(x[,1], collapse=',')),
+      geometry_types = sapply(layers, \(x) paste(x[,2], collapse=','))
+    )
+    dat$files <- files
+    dat$layers <- layers
   })
 
-  output$layers <- renderDT({
-    req(dat$layers)
+  output$shapefiles <- renderDT({
+    req(dat$shapefiles)
     datatable(
-      dat$layers,
+      dat$shapefiles,
        selection = list(
-         selected = if(nrow(dat$layers) == 1) 1 else NULL,
+         mode = 'single',
+         selected = if(nrow(dat$shapefiles) == 1) 1 else NULL,
          target = 'row'
        )
     )
-  }, options = list(
-       pageLength = 10
-     )
-  )
+  })
+  
+  output$layers <- renderDT({
+    req(dat$layers, input$shapefiles_rows_selected)
+    datatable(
+      dat$layers[[input$shapefiles_rows_selected]],
+       selection = list(
+         mode = 'single',
+         selected = if(nrow(dat$layers[[input$shapefiles_rows_selected]]) == 1) 1 else NULL,
+         target = 'row'
+       )
+    )
+  })
 
   observe({
-    req(input$layers_rows_selected)
-    dat$sf <- st_read(dat$file, layer = dat$layers[input$layers_rows_selected,1])
+    req(input$shapefiles_rows_selected,input$layers_rows_selected)
+    dat$sf <- st_read(
+      dat$files[[input$shapefiles_rows_selected]], 
+      layer = dat$layers[[input$shapefiles_rows_selected]][input$layers_rows_selected,1]
+    )
   })
   
   output$map <- renderLeaflet({
